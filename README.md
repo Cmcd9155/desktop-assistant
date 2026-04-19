@@ -40,7 +40,7 @@ The launchers are idempotent:
 
 ## Backend API
 
-- `POST /api/chat/turn` -> `{ replyText, imageJobId, emotion, openclawRequestId?, warnings[] }`
+- `POST /api/chat/turn` -> `{ replyText, imageAction, imageJobId, emotion, openclawRequestId?, warnings[] }`
 - `GET /api/chat/image/:jobId` -> `{ status, imageUrl?, moderated?, errorCode? }`
 - `GET/PUT /api/settings/companion` -> `{ bio, instructions, baseImagePath, nsfwEnabled, memoryEnabled }`
 - `POST /api/settings/companion/base-image` (multipart upload)

@@ -89,7 +89,7 @@ class XaiImageClient:
         self,
         *,
         prompt: str,
-        base_image_path: Path | None,
+        reference_image_paths: list[Path] | None,
         nsfw_enabled: bool,
         image_width: int | None = None,
         image_height: int | None = None,
@@ -117,7 +117,8 @@ class XaiImageClient:
         )
         composed_prompt = f"{prompt_prefix}\nUser turn instruction:\n{prompt}"
 
-        endpoint = "/images/edits" if base_image_path and base_image_path.exists() else "/images/generations"
+        references = [path for path in (reference_image_paths or []) if path.exists()][:5]
+        endpoint = "/images/edits" if references else "/images/generations"
         body: dict[str, Any] = {
             "model": self._config.xai_image_model,
             "prompt": composed_prompt,
@@ -125,11 +126,13 @@ class XaiImageClient:
         }
         if aspect_ratio:
             body["aspect_ratio"] = aspect_ratio
-        if endpoint == "/images/edits" and base_image_path:
-            body["image"] = {
-                "type": "image_url",
-                "url": _image_data_url(base_image_path),
-            }
+        if endpoint == "/images/edits" and len(references) == 1:
+            body["image"] = {"type": "image_url", "url": _image_data_url(references[0])}
+        elif endpoint == "/images/edits" and len(references) >= 2:
+            body["images"] = [
+                {"type": "image_url", "url": _image_data_url(path)}
+                for path in references
+            ]
 
         headers = {
             "Authorization": f"Bearer {self._config.xai_api_key}",

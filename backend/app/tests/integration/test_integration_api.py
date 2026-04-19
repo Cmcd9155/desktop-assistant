@@ -56,7 +56,9 @@ def test_text_first_turn_returns_before_image_completes(tmp_path) -> None:
         elapsed = time.perf_counter() - start
         assert response.status_code == 200
         assert elapsed < 0.2
-        job_id = response.json()["imageJobId"]
+        turn_payload = response.json()
+        assert turn_payload["imageAction"]
+        job_id = turn_payload["imageJobId"]
 
         deadline = time.time() + 3
         status = ""
@@ -165,12 +167,12 @@ def test_toggle_memory_off_flushes_once_and_blocks_new_auto_writes(tmp_path) -> 
 @pytest.mark.integration
 def test_settings_base_image_path_used_in_next_prompt(tmp_path) -> None:
     app = create_app(_config(tmp_path))
-    captured = {"base": None}
+    captured = {"refs": None}
     base_image = app.state.config.upload_dir / "seed.png"
     base_image.write_bytes(b"seed")
 
-    async def capture_call(*, base_image_path=None, **kwargs):
-        captured["base"] = str(base_image_path) if base_image_path else None
+    async def capture_call(*, reference_image_paths=None, **kwargs):
+        captured["refs"] = [str(path) for path in (reference_image_paths or [])]
         return ImageGenerationResult(image_bytes=b"img", moderated=False, error_code=None)
 
     app.state.image_service._xai_client.generate_or_edit = capture_call
@@ -180,7 +182,40 @@ def test_settings_base_image_path_used_in_next_prompt(tmp_path) -> None:
         client.put("/api/settings/companion", json=settings)
         client.post("/api/chat/turn", json={"message": "hello"})
         time.sleep(0.1)
-        assert captured["base"] == str(base_image)
+        assert captured["refs"] == [str(base_image)]
+
+
+@pytest.mark.integration
+def test_turn_two_uses_previous_valid_then_base_references(tmp_path) -> None:
+    app = create_app(_config(tmp_path))
+    base_image = app.state.config.upload_dir / "seed.png"
+    base_image.write_bytes(b"seed")
+    captured_refs: list[list[str]] = []
+
+    async def capture_call(*, reference_image_paths=None, **kwargs):
+        captured_refs.append([str(path) for path in (reference_image_paths or [])])
+        return ImageGenerationResult(image_bytes=b"img", moderated=False, error_code=None)
+
+    app.state.image_service._xai_client.generate_or_edit = capture_call
+    with TestClient(app) as client:
+        settings = client.get("/api/settings/companion").json()
+        settings["baseImagePath"] = str(base_image)
+        client.put("/api/settings/companion", json=settings)
+
+        first_turn = client.post("/api/chat/turn", json={"message": "first"}).json()
+        assert first_turn["imageAction"]
+        time.sleep(0.1)
+        first_image = client.get(f"/api/chat/image/{first_turn['imageJobId']}").json()
+        assert first_image["status"] == "completed"
+        assert first_image["imageUrl"]
+        latest_output = app.state.config.image_dir / f"{first_turn['imageJobId']}.png"
+
+        second_turn = client.post("/api/chat/turn", json={"message": "second"}).json()
+        assert second_turn["imageAction"]
+        time.sleep(0.1)
+        assert len(captured_refs) >= 2
+        assert captured_refs[0] == [str(base_image)]
+        assert captured_refs[1] == [str(latest_output), str(base_image)]
 
 
 @pytest.mark.integration

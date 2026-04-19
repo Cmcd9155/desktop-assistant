@@ -80,7 +80,7 @@ async def test_edit_request_uses_image_object_payload(monkeypatch, tmp_path) -> 
     client = XaiImageClient(cfg)
     result = await client.generate_or_edit(
         prompt="keep same character",
-        base_image_path=base_image,
+        reference_image_paths=[base_image],
         nsfw_enabled=True,
         image_width=1200,
         image_height=900,
@@ -130,7 +130,7 @@ async def test_generation_request_omits_image_payload(monkeypatch, tmp_path) -> 
     client = XaiImageClient(cfg)
     result = await client.generate_or_edit(
         prompt="draw new pose",
-        base_image_path=None,
+        reference_image_paths=[],
         nsfw_enabled=True,
     )
 
@@ -141,6 +141,56 @@ async def test_generation_request_omits_image_payload(monkeypatch, tmp_path) -> 
     assert "image" not in payload
     assert "image_url" not in payload
     assert "aspect_ratio" not in payload
+
+
+@pytest.mark.asyncio
+async def test_multi_reference_edit_uses_images_array(monkeypatch, tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg.ensure_directories()
+    first = cfg.upload_dir / "first.png"
+    second = cfg.upload_dir / "second.png"
+    first.write_bytes(b"first-bytes")
+    second.write_bytes(b"second-bytes")
+    captured: dict[str, object] = {}
+    expected_b64 = base64.b64encode(b"merged-bytes").decode("ascii")
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            captured["base_url"] = kwargs.get("base_url")
+            captured["timeout"] = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, endpoint, headers=None, json=None):
+            captured["endpoint"] = endpoint
+            captured["headers"] = headers
+            captured["json"] = json
+            return _FakeResponse({"data": [{"b64_json": expected_b64}]})
+
+        async def get(self, url):
+            raise AssertionError("Unexpected fallback GET call")
+
+    monkeypatch.setattr(module_under_test.httpx, "AsyncClient", FakeAsyncClient)
+    client = XaiImageClient(cfg)
+    result = await client.generate_or_edit(
+        prompt="keep same character and change pose",
+        reference_image_paths=[first, second],
+        nsfw_enabled=True,
+    )
+
+    assert result.image_bytes == b"merged-bytes"
+    assert captured["endpoint"] == "/images/edits"
+    payload = captured["json"]
+    assert isinstance(payload, dict)
+    assert "image" not in payload
+    assert "images" in payload
+    assert len(payload["images"]) == 2
+    assert payload["images"][0]["url"].startswith("data:image/png;base64,")
+    assert payload["images"][1]["url"].startswith("data:image/png;base64,")
 
 
 def test_closest_supported_aspect_ratio_picks_nearest_value() -> None:

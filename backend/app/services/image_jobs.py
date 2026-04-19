@@ -92,11 +92,21 @@ class ImageJobService:
         image_height: int | None = None,
     ) -> None:
         previous_valid = self._load_runtime().get("lastValidImagePath", "")
+        reference_image_paths: list[Path] = []
+        if previous_valid:
+            previous_path = Path(previous_valid)
+            if previous_path.exists():
+                reference_image_paths.append(previous_path)
+        if base_image_path and base_image_path.exists():
+            if not any(existing.resolve() == base_image_path.resolve() for existing in reference_image_paths):
+                reference_image_paths.append(base_image_path)
+        reference_image_paths = reference_image_paths[:5]
+
         await self._update_job(job_id, status=ImageJobStatus.running, completedAt=None)
 
         result = await self._xai_client.generate_or_edit(
             prompt=prompt,
-            base_image_path=base_image_path,
+            reference_image_paths=reference_image_paths,
             nsfw_enabled=nsfw_enabled,
             image_width=image_width,
             image_height=image_height,

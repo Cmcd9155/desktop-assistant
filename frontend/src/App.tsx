@@ -131,6 +131,7 @@ function App() {
   const [openClawCursor, setOpenClawCursor] = useState('')
   const [openClawEvents, setOpenClawEvents] = useState<OpenClawEvent[]>([])
   const chatPanelRef = useRef<HTMLElement | null>(null)
+  const activeTabLabel = tab === 'chat' ? 'Chat Console' : 'Companion Settings'
 
   const stateLabel = useMemo(() => companionState.toUpperCase(), [companionState])
 
@@ -285,39 +286,84 @@ function App() {
 
   return (
     <div className="app-shell">
+      <a href="#main-content" className="skip-link">
+        Skip to Main Content
+      </a>
       <header className="top-bar">
-        <h1>Desktop Assistant MVP1</h1>
-        <div className="tabs">
-          <button className={tab === 'chat' ? 'active' : ''} onClick={() => setTab('chat')}>
-            Chat
-          </button>
-          <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>
-            Settings
-          </button>
+        <div className="brand-block">
+          <h1>Desktop Assistant</h1>
+          <p>Realtime chat, image state, memory, and OpenClaw bridge in one workspace.</p>
+        </div>
+        <div className="controls-block">
+          <p className="active-tab">Active View: {activeTabLabel}</p>
+          <div className="tabs" role="tablist" aria-label="Assistant views">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'chat'}
+              aria-controls="chat-panel"
+              id="chat-tab"
+              className={tab === 'chat' ? 'active' : ''}
+              onClick={() => setTab('chat')}
+            >
+              Chat
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'settings'}
+              aria-controls="settings-panel"
+              id="settings-tab"
+              className={tab === 'settings' ? 'active' : ''}
+              onClick={() => setTab('settings')}
+            >
+              Settings
+            </button>
+          </div>
         </div>
       </header>
 
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className="toast" role="status" aria-live="polite" aria-atomic="true">
+          {toast}
+        </div>
+      )}
 
-      <main className="workspace">
-        <section className={`companion-panel state-${companionState}`}>
+      <main id="main-content" className="workspace">
+        <aside className={`companion-panel state-${companionState}`} aria-labelledby="companion-panel-title">
+          <h2 id="companion-panel-title" className="panel-title">
+            Companion
+          </h2>
           <div className="state-pill">{stateLabel}</div>
           {imageUrl ? (
-            <img src={imageUrl} alt="Companion" className="companion-image" />
+            <img
+              src={imageUrl}
+              alt="Companion portrait"
+              className="companion-image"
+              width={640}
+              height={800}
+              loading="lazy"
+            />
           ) : (
             <div className="companion-placeholder">Base image not generated yet.</div>
           )}
           <p className="state-caption">
             Companion state reacts to reply emotion and moderation fallback.
           </p>
-        </section>
+        </aside>
 
         {tab === 'chat' ? (
-          <section ref={chatPanelRef} className="panel chat-panel">
-            <div className="messages">
+          <section
+            id="chat-panel"
+            aria-labelledby="chat-tab"
+            ref={chatPanelRef}
+            className="panel chat-panel"
+          >
+            <h2 className="panel-title">Chat Console</h2>
+            <div className="messages" aria-label="Conversation history">
               {messages.map((message, index) => (
                 <article key={`${message.role}-${index}`} className={`message ${message.role}`}>
-                  <h3>{message.role === 'assistant' ? 'Assistant' : 'You'}</h3>
+                  <p className="message-author">{message.role === 'assistant' ? 'Assistant' : 'You'}</p>
                   <p>{message.text}</p>
                 </article>
               ))}
@@ -326,22 +372,31 @@ function App() {
               <label className="checkbox">
                 <input
                   type="checkbox"
+                  name="includeOpenClaw"
                   checked={includeOpenClaw}
                   onChange={(event) => setIncludeOpenClaw(event.target.checked)}
                 />
-                Send turn to OpenClaw bridge
+                Send Turn to OpenClaw Bridge
+              </label>
+              <label className="field-label" htmlFor="chat-message-input">
+                Message
               </label>
               <textarea
+                id="chat-message-input"
+                name="message"
+                autoComplete="off"
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={handleComposerKeyDown}
-                placeholder="Type a message..."
+                placeholder="Type a message…"
                 rows={4}
               />
               <div className="row">
-                <button disabled={loading}>{loading ? 'Processing...' : 'Send Turn'}</button>
-                <button type="button" onClick={() => void pollOpenClaw()}>
-                  Poll OpenClaw
+                <button type="submit" disabled={loading}>
+                  {loading ? 'Processing…' : 'Send Turn'}
+                </button>
+                <button type="button" className="button-secondary" onClick={() => void pollOpenClaw()}>
+                  Poll OpenClaw Events
                 </button>
               </div>
             </form>
@@ -361,18 +416,25 @@ function App() {
             </div>
           </section>
         ) : (
-          <section className="panel settings-panel">
-            <label>
+          <section id="settings-panel" aria-labelledby="settings-tab" className="panel settings-panel">
+            <h2 className="panel-title">Companion Settings</h2>
+            <label htmlFor="bio-text">
               Bio
               <textarea
+                id="bio-text"
+                name="bio"
+                autoComplete="off"
                 value={settings.bio}
                 onChange={(event) => setSettings((prev) => ({ ...prev, bio: event.target.value }))}
                 rows={2}
               />
             </label>
-            <label>
+            <label htmlFor="instructions-text">
               Instructions
               <textarea
+                id="instructions-text"
+                name="instructions"
+                autoComplete="off"
                 value={settings.instructions}
                 onChange={(event) =>
                   setSettings((prev) => ({ ...prev, instructions: event.target.value }))
@@ -380,36 +442,52 @@ function App() {
                 rows={3}
               />
             </label>
-            <label>
+            <label htmlFor="base-image-file">
               Base image
-              <input type="file" accept="image/*" onChange={(event) => void uploadBaseImage(event.target.files?.[0] ?? null)} />
+              <input
+                id="base-image-file"
+                name="baseImageFile"
+                type="file"
+                accept="image/*"
+                onChange={(event) => void uploadBaseImage(event.target.files?.[0] ?? null)}
+              />
               <small>{settings.baseImagePath || 'No base image configured.'}</small>
             </label>
             <label className="checkbox">
               <input
                 type="checkbox"
+                name="nsfwEnabled"
                 checked={settings.nsfwEnabled}
                 onChange={(event) =>
                   setSettings((prev) => ({ ...prev, nsfwEnabled: event.target.checked }))
                 }
               />
-              NSFW enabled
+              NSFW Enabled
             </label>
             <label className="checkbox">
               <input
                 type="checkbox"
+                name="memoryEnabled"
                 checked={settings.memoryEnabled}
                 onChange={(event) =>
                   setSettings((prev) => ({ ...prev, memoryEnabled: event.target.checked }))
                 }
               />
-              Memory system enabled
+              Memory System Enabled
             </label>
             <div className="row">
-              <button onClick={() => void saveSettings()}>Save Settings</button>
+              <button type="button" onClick={() => void saveSettings()}>
+                Save Settings
+              </button>
               <button
                 type="button"
-                onClick={() => void api('/api/memory/flush', { method: 'POST', body: JSON.stringify({ trigger: 'inactivity' }) })}
+                className="button-secondary"
+                onClick={() =>
+                  void api('/api/memory/flush', {
+                    method: 'POST',
+                    body: JSON.stringify({ trigger: 'inactivity' }),
+                  })
+                }
               >
                 Flush Memory
               </button>
@@ -417,21 +495,36 @@ function App() {
             <div className="memory-tools">
               <h3>Memory</h3>
               <div className="row">
+                <label className="sr-only" htmlFor="memory-query-input">
+                  Search Memory
+                </label>
                 <input
+                  id="memory-query-input"
+                  name="memoryQuery"
+                  type="search"
+                  autoComplete="off"
                   value={memoryQuery}
                   onChange={(event) => setMemoryQuery(event.target.value)}
-                  placeholder="Search memory..."
+                  placeholder="Search memory…"
                 />
-                <button onClick={() => void loadMemory(memoryQuery)}>Query</button>
-                <button onClick={() => void wipeMemory()}>Wipe</button>
+                <button type="button" className="button-secondary" onClick={() => void loadMemory(memoryQuery)}>
+                  Query
+                </button>
+                <button type="button" className="button-danger" onClick={() => void wipeMemory()}>
+                  Wipe
+                </button>
               </div>
-              <ul>
-                {memoryItems.map((item) => (
-                  <li key={item.id}>
-                    <strong>{item.category}</strong> {item.text}
-                  </li>
-                ))}
-              </ul>
+              {memoryItems.length === 0 ? (
+                <p className="empty-state">No memory entries found.</p>
+              ) : (
+                <ul>
+                  {memoryItems.map((item) => (
+                    <li key={item.id}>
+                      <strong>{item.category}</strong> {item.text}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </section>
         )}

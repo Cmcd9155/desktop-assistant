@@ -34,6 +34,9 @@ Avoid blanket adds unless user asked for all changes.
 Subject line format: `<type>(<scope>): <what changed>`
 Keep subject under 72 chars.
 Use imperative voice.
+Derive message from staged diff only (`git diff --cached --name-only` + `git diff --cached`).
+Message must match files being committed and pushed.
+Do not mention work from unstaged/untracked files.
 Body lines explain:
 - what changed
 - why it changed

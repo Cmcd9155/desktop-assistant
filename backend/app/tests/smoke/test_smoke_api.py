@@ -14,6 +14,7 @@ def test_chat_turn_text_first_and_image_job_terminal(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["replyText"]
+    assert payload["imageAction"]
     assert payload["imageJobId"]
 
     deadline = time.time() + 3
@@ -82,4 +83,3 @@ def test_memory_endpoints_reachable(client) -> None:
     wipe = client.delete("/api/memory")
     assert wipe.status_code == 200
     assert wipe.json()["ok"] is True
-

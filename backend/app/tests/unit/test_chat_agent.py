@@ -69,7 +69,12 @@ async def test_reply_uses_remote_text_when_xai_available(monkeypatch, tmp_path) 
                     "output": [
                         {
                             "type": "message",
-                            "content": [{"type": "output_text", "text": "Real companion response"}],
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "text": '{"replyText":"Real companion response","imageAction":"waves while speaking"}',
+                                }
+                            ],
                         }
                     ]
                 }
@@ -81,7 +86,8 @@ async def test_reply_uses_remote_text_when_xai_available(monkeypatch, tmp_path) 
 
     reply = await agent.reply("hey", settings)
 
-    assert reply == "Real companion response"
+    assert reply.reply_text == "Real companion response"
+    assert reply.image_action == "waves while speaking"
     assert captured["endpoint"] == "/responses"
     payload = captured["json"]
     assert isinstance(payload, dict)
@@ -99,9 +105,42 @@ async def test_reply_fallback_does_not_dump_settings(tmp_path) -> None:
 
     reply = await agent.reply("hey", settings)
 
-    assert "Answer:" not in reply
-    assert "Bio:" not in reply
-    assert "Instructions:" not in reply
-    assert "helpful desktop companion" not in reply.lower()
-    assert "i heard you: hey" in reply.lower()
+    assert "Answer:" not in reply.reply_text
+    assert "Bio:" not in reply.reply_text
+    assert "Instructions:" not in reply.reply_text
+    assert "helpful desktop companion" not in reply.reply_text.lower()
+    assert "i heard you: hey" in reply.reply_text.lower()
+    assert reply.image_action == ""
 
+
+@pytest.mark.asyncio
+async def test_reply_invalid_json_falls_back_to_plain_text(monkeypatch, tmp_path) -> None:
+    cfg = _cfg(tmp_path, api_key="test-key")
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, endpoint, headers=None, json=None):
+            return _FakeResponse(
+                {
+                    "output": [
+                        {
+                            "type": "message",
+                            "content": [{"type": "output_text", "text": "Unstructured assistant reply"}],
+                        }
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(module_under_test.httpx, "AsyncClient", FakeAsyncClient)
+    agent = PrimaryChatAgent(cfg)
+    reply = await agent.reply("hey", CompanionSettings())
+    assert reply.reply_text == "Unstructured assistant reply"
+    assert reply.image_action == ""

@@ -36,18 +36,23 @@ from app.services.xai_image_client import XaiImageClient
 def _build_image_prompt(
     *,
     user_text: str,
-    assistant_text: str,
+    image_action: str,
     emotion: CompanionState,
-    base_image_path: str,
 ) -> str:
     return (
-        "Keep the same character identity from the base anchor image.\n"
-        f"Base image anchor path: {base_image_path or 'missing'}\n"
+        "Keep the same character identity across turns and references.\n"
         f"Companion expression target: {emotion.value}\n"
         "Render only one character and preserve face consistency.\n"
+        f"Action directive: {image_action}\n"
         f"User said: {user_text}\n"
-        f"Assistant replied: {assistant_text}\n"
     )
+
+
+def _fallback_image_action(user_text: str, emotion: CompanionState) -> str:
+    condensed = " ".join(user_text.strip().split())
+    if not condensed:
+        condensed = "the current request"
+    return f"The companion is {emotion.value} while acting on: {condensed[:180]}"
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
@@ -112,8 +117,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         settings = await settings_service.get()
         await memory_service.maybe_flush_for_inactivity(memory_enabled=settings.memoryEnabled)
 
-        reply = await chat_agent.reply(payload.message, settings)
+        chat_result = await chat_agent.reply(payload.message, settings)
+        reply = chat_result.reply_text
         emotion = map_emotion(reply)
+        image_action = chat_result.image_action.strip() or _fallback_image_action(payload.message, emotion)
         warnings: list[str] = []
 
         base_image_path = Path(settings.baseImagePath) if settings.baseImagePath else None
@@ -123,9 +130,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
         prompt = _build_image_prompt(
             user_text=payload.message,
-            assistant_text=reply,
+            image_action=image_action,
             emotion=emotion,
-            base_image_path=settings.baseImagePath,
         )
 
         turn_id = str(uuid4())
@@ -153,6 +159,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
         return ChatTurnResponse(
             replyText=reply,
+            imageAction=image_action,
             imageJobId=image_job_id,
             emotion=emotion,
             openclawRequestId=openclaw_request_id,

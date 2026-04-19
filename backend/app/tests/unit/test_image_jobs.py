@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 
@@ -13,8 +14,10 @@ from app.services.xai_image_client import ImageGenerationResult
 class FakeXaiClient:
     def __init__(self, result: ImageGenerationResult) -> None:
         self.result = result
+        self.calls: list[dict[str, object]] = []
 
-    async def generate_or_edit(self, **_: object) -> ImageGenerationResult:
+    async def generate_or_edit(self, **kwargs: object) -> ImageGenerationResult:
+        self.calls.append(kwargs)
         return self.result
 
 
@@ -88,3 +91,44 @@ async def test_image_job_failure_falls_back_without_crash(tmp_path) -> None:
     response = await service.get(job_id)
     assert response.status == ImageJobStatus.failed
     assert response.errorCode == "http_500"
+
+
+@pytest.mark.asyncio
+async def test_image_job_reference_chain_orders_previous_then_base(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg.ensure_directories()
+    previous = cfg.image_dir / "previous.png"
+    previous.write_bytes(b"old")
+    base = cfg.upload_dir / "base.png"
+    base.write_bytes(b"base")
+    runtime_path = cfg.data_dir / "runtime_state.json"
+    runtime_path.write_text(json.dumps({"lastValidImagePath": str(previous)}), encoding="utf-8")
+
+    fake = FakeXaiClient(ImageGenerationResult(image_bytes=b"pngbytes", moderated=False, error_code=None))
+    service = ImageJobService(cfg, fake)
+    await service.enqueue(turn_id="turn-1", prompt="hello", base_image_path=base, nsfw_enabled=True)
+    await asyncio.sleep(0.05)
+
+    assert len(fake.calls) == 1
+    refs = fake.calls[0]["reference_image_paths"]
+    assert isinstance(refs, list)
+    assert refs == [previous, base]
+
+
+@pytest.mark.asyncio
+async def test_image_job_reference_chain_dedupes_identical_paths(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg.ensure_directories()
+    same = cfg.upload_dir / "base.png"
+    same.write_bytes(b"same")
+    runtime_path = cfg.data_dir / "runtime_state.json"
+    runtime_path.write_text(json.dumps({"lastValidImagePath": str(same)}), encoding="utf-8")
+
+    fake = FakeXaiClient(ImageGenerationResult(image_bytes=b"pngbytes", moderated=False, error_code=None))
+    service = ImageJobService(cfg, fake)
+    await service.enqueue(turn_id="turn-1", prompt="hello", base_image_path=same, nsfw_enabled=True)
+    await asyncio.sleep(0.05)
+
+    refs = fake.calls[0]["reference_image_paths"]
+    assert isinstance(refs, list)
+    assert refs == [same]

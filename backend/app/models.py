@@ -40,6 +40,7 @@ class ChatTurnRequest(BaseModel):
 
 class ChatTurnResponse(BaseModel):
     replyText: str
+    imageAction: str
     imageJobId: str
     emotion: CompanionState
     openclawRequestId: str | None = None
