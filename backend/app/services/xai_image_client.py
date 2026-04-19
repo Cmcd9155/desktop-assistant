@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,21 @@ from app.config import AppConfig
 
 PNG_1X1_BASE64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/w8AAgMBgNmPR9kAAAAASUVORK5CYII="
+)
+SUPPORTED_ASPECT_RATIOS: tuple[str, ...] = (
+    "1:1",
+    "16:9",
+    "9:16",
+    "4:3",
+    "3:4",
+    "3:2",
+    "2:3",
+    "2:1",
+    "1:2",
+    "19.5:9",
+    "9:19.5",
+    "20:9",
+    "9:20",
 )
 
 
@@ -47,6 +63,24 @@ def _image_data_url(path: Path) -> str:
     return f"data:{mime};base64,{b64}"
 
 
+def _to_ratio_value(ratio: str) -> float:
+    left, right = ratio.split(":")
+    return float(left) / float(right)
+
+
+def _closest_supported_aspect_ratio(width: int | None, height: int | None) -> str | None:
+    if not width or not height:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    target = width / height
+    # Compare in log space so tall/wide errors are symmetric.
+    return min(
+        SUPPORTED_ASPECT_RATIOS,
+        key=lambda ratio: abs(math.log(target / _to_ratio_value(ratio))),
+    )
+
+
 class XaiImageClient:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
@@ -57,6 +91,8 @@ class XaiImageClient:
         prompt: str,
         base_image_path: Path | None,
         nsfw_enabled: bool,
+        image_width: int | None = None,
+        image_height: int | None = None,
     ) -> ImageGenerationResult:
         if not self._config.xai_api_key:
             return ImageGenerationResult(
@@ -66,11 +102,17 @@ class XaiImageClient:
                 raw={"warning": "XAI_API_KEY not set; using local placeholder image."},
             )
 
+        aspect_ratio = _closest_supported_aspect_ratio(image_width, image_height)
+        frame_hint = ""
+        if image_width and image_height:
+            frame_hint = f"Target render frame: {image_width}x{image_height} pixels.\n"
+
         prompt_prefix = (
             "Character template: anime desk companion, stable identity, consistent face, "
             "consistent clothing silhouette, high quality, soft lighting.\n"
             "Style: clean line art + painterly shading, single subject, desktop framing.\n"
             f"Policy intent: NSFW product mode is {'enabled' if nsfw_enabled else 'disabled'}.\n"
+            f"{frame_hint}"
             "Follow platform safety policy while maximizing prompt fidelity.\n"
         )
         composed_prompt = f"{prompt_prefix}\nUser turn instruction:\n{prompt}"
@@ -81,8 +123,13 @@ class XaiImageClient:
             "prompt": composed_prompt,
             "response_format": "b64_json",
         }
+        if aspect_ratio:
+            body["aspect_ratio"] = aspect_ratio
         if endpoint == "/images/edits" and base_image_path:
-            body["image_url"] = _image_data_url(base_image_path)
+            body["image"] = {
+                "type": "image_url",
+                "url": _image_data_url(base_image_path),
+            }
 
         headers = {
             "Authorization": f"Bearer {self._config.xai_api_key}",

@@ -56,7 +56,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     settings_service = SettingsService(cfg)
     memory_service = MemoryService(cfg)
-    chat_agent = PrimaryChatAgent()
+    chat_agent = PrimaryChatAgent(cfg)
     xai_client = XaiImageClient(cfg)
     image_service = ImageJobService(cfg, xai_client)
     openclaw_service = OpenClawBridgeService(cfg)
@@ -134,6 +134,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             prompt=prompt,
             base_image_path=base_image_path,
             nsfw_enabled=settings.nsfwEnabled,
+            image_width=payload.imageWidth,
+            image_height=payload.imageHeight,
         )
 
         openclaw_request_id = None

@@ -35,6 +35,7 @@ class AppConfig:
     memory_inactivity_minutes: int
     memory_default_enabled: bool
     nsfw_default_enabled: bool
+    xai_text_model: str = "grok-4"
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -62,6 +63,7 @@ class AppConfig:
             memory_inactivity_minutes=int(os.getenv("MEMORY_INACTIVITY_MINUTES", "30")),
             memory_default_enabled=_bool_env("MEMORY_ENABLED_DEFAULT", True),
             nsfw_default_enabled=_bool_env("NSFW_ENABLED_DEFAULT", True),
+            xai_text_model=os.getenv("XAI_TEXT_MODEL", "grok-4"),
         )
 
     def ensure_directories(self) -> None:

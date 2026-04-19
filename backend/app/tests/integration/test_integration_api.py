@@ -184,6 +184,27 @@ def test_settings_base_image_path_used_in_next_prompt(tmp_path) -> None:
 
 
 @pytest.mark.integration
+def test_chat_turn_forwards_window_dimensions_to_image_client(tmp_path) -> None:
+    app = create_app(_config(tmp_path))
+    captured = {"width": None, "height": None}
+
+    async def capture_call(*, image_width=None, image_height=None, **kwargs):
+        captured["width"] = image_width
+        captured["height"] = image_height
+        return ImageGenerationResult(image_bytes=b"img", moderated=False, error_code=None)
+
+    app.state.image_service._xai_client.generate_or_edit = capture_call
+    with TestClient(app) as client:
+        client.post(
+            "/api/chat/turn",
+            json={"message": "hello", "imageWidth": 1280, "imageHeight": 720},
+        )
+        time.sleep(0.1)
+        assert captured["width"] == 1280
+        assert captured["height"] == 720
+
+
+@pytest.mark.integration
 def test_upload_base_image_persists_and_is_served(tmp_path) -> None:
     app = create_app(_config(tmp_path))
 

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import './App.css'
 
 type CompanionState = 'idle' | 'thinking' | 'smiling' | 'frowning' | 'moderated'
@@ -31,6 +31,13 @@ type ChatTurnResponse = {
   emotion: CompanionState
   openclawRequestId?: string | null
   warnings: string[]
+}
+
+type ChatTurnRequest = {
+  message: string
+  includeOpenClaw: boolean
+  imageWidth?: number
+  imageHeight?: number
 }
 
 type ChatImageResponse = {
@@ -123,6 +130,7 @@ function App() {
   const [memoryItems, setMemoryItems] = useState<MemoryItem[]>([])
   const [openClawCursor, setOpenClawCursor] = useState('')
   const [openClawEvents, setOpenClawEvents] = useState<OpenClawEvent[]>([])
+  const chatPanelRef = useRef<HTMLElement | null>(null)
 
   const stateLabel = useMemo(() => companionState.toUpperCase(), [companionState])
 
@@ -175,8 +183,7 @@ function App() {
     setToast('Image job timed out.')
   }
 
-  async function handleSend(event: FormEvent): Promise<void> {
-    event.preventDefault()
+  async function submitCurrentMessage(): Promise<void> {
     const trimmed = input.trim()
     if (!trimmed || loading) return
 
@@ -186,9 +193,21 @@ function App() {
     setCompanionState('thinking')
 
     try {
+      const bounds = chatPanelRef.current?.getBoundingClientRect()
+      const imageWidth = bounds ? Math.round(bounds.width) : undefined
+      const imageHeight = bounds ? Math.round(bounds.height) : undefined
+      const turnPayload: ChatTurnRequest = {
+        message: trimmed,
+        includeOpenClaw,
+      }
+      if (imageWidth && imageHeight) {
+        turnPayload.imageWidth = imageWidth
+        turnPayload.imageHeight = imageHeight
+      }
+
       const turn = await api<ChatTurnResponse>('/api/chat/turn', {
         method: 'POST',
-        body: JSON.stringify({ message: trimmed, includeOpenClaw }),
+        body: JSON.stringify(turnPayload),
       })
 
       setMessages((prev) => [...prev, { role: 'assistant', text: turn.replyText }])
@@ -202,6 +221,19 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleSend(event: FormEvent): void {
+    event.preventDefault()
+    void submitCurrentMessage()
+  }
+
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
+      return
+    }
+    event.preventDefault()
+    void submitCurrentMessage()
   }
 
   async function saveSettings(): Promise<void> {
@@ -281,7 +313,7 @@ function App() {
         </section>
 
         {tab === 'chat' ? (
-          <section className="panel chat-panel">
+          <section ref={chatPanelRef} className="panel chat-panel">
             <div className="messages">
               {messages.map((message, index) => (
                 <article key={`${message.role}-${index}`} className={`message ${message.role}`}>
@@ -302,6 +334,7 @@ function App() {
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
                 placeholder="Type a message..."
                 rows={4}
               />

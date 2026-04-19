@@ -34,6 +34,8 @@ class CompanionSettings(BaseModel):
 class ChatTurnRequest(BaseModel):
     message: str = Field(min_length=1)
     includeOpenClaw: bool = False
+    imageWidth: int | None = Field(default=None, ge=64, le=4096)
+    imageHeight: int | None = Field(default=None, ge=64, le=4096)
 
 
 class ChatTurnResponse(BaseModel):

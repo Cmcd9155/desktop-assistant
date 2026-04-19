@@ -28,6 +28,8 @@ class ImageJobService:
         prompt: str,
         base_image_path: Path | None,
         nsfw_enabled: bool,
+        image_width: int | None = None,
+        image_height: int | None = None,
     ) -> str:
         job_id = str(uuid4())
         prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -48,6 +50,8 @@ class ImageJobService:
                     prompt=prompt,
                     base_image_path=base_image_path,
                     nsfw_enabled=nsfw_enabled,
+                    image_width=image_width,
+                    image_height=image_height,
                 )
             )
             self._tasks[job_id] = task
@@ -84,6 +88,8 @@ class ImageJobService:
         prompt: str,
         base_image_path: Path | None,
         nsfw_enabled: bool,
+        image_width: int | None = None,
+        image_height: int | None = None,
     ) -> None:
         previous_valid = self._load_runtime().get("lastValidImagePath", "")
         await self._update_job(job_id, status=ImageJobStatus.running, completedAt=None)
@@ -92,6 +98,8 @@ class ImageJobService:
             prompt=prompt,
             base_image_path=base_image_path,
             nsfw_enabled=nsfw_enabled,
+            image_width=image_width,
+            image_height=image_height,
         )
 
         if result.image_bytes:
@@ -151,4 +159,3 @@ class ImageJobService:
         runtime = read_json(self._runtime_path, {})
         runtime.setdefault("lastValidImagePath", "")
         return runtime
-
