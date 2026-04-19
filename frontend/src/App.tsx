@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent as ReactKeyboardEvent } from 'react'
 import './App.css'
 
@@ -130,7 +130,8 @@ function App() {
   const [memoryItems, setMemoryItems] = useState<MemoryItem[]>([])
   const [openClawCursor, setOpenClawCursor] = useState('')
   const [openClawEvents, setOpenClawEvents] = useState<OpenClawEvent[]>([])
-  const chatPanelRef = useRef<HTMLElement | null>(null)
+  const companionFrameRef = useRef<HTMLDivElement | null>(null)
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null)
   const activeTabLabel = tab === 'chat' ? 'Chat Console' : 'Companion Settings'
 
   const stateLabel = useMemo(() => companionState.toUpperCase(), [companionState])
@@ -146,9 +147,15 @@ function App() {
     return () => clearTimeout(timeout)
   }, [toast])
 
+  useLayoutEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+    container.scrollTop = container.scrollHeight
+  }, [messages])
+
   async function loadSettings(): Promise<void> {
     const current = await api<CompanionSettings>('/api/settings/companion')
-    setSettings(current)
+    setSettings({ ...current, nsfwEnabled: true })
     setImageUrl(resolveBaseImagePreview(current.baseImagePath))
   }
 
@@ -194,7 +201,7 @@ function App() {
     setCompanionState('thinking')
 
     try {
-      const bounds = chatPanelRef.current?.getBoundingClientRect()
+      const bounds = companionFrameRef.current?.getBoundingClientRect()
       const imageWidth = bounds ? Math.round(bounds.width) : undefined
       const imageHeight = bounds ? Math.round(bounds.height) : undefined
       const turnPayload: ChatTurnRequest = {
@@ -240,9 +247,9 @@ function App() {
   async function saveSettings(): Promise<void> {
     const updated = await api<CompanionSettings>('/api/settings/companion', {
       method: 'PUT',
-      body: JSON.stringify(settings),
+      body: JSON.stringify({ ...settings, nsfwEnabled: true }),
     })
-    setSettings(updated)
+    setSettings({ ...updated, nsfwEnabled: true })
     setToast('Settings saved.')
   }
 
@@ -335,32 +342,29 @@ function App() {
             Companion
           </h2>
           <div className="state-pill">{stateLabel}</div>
-          {imageUrl ? (
-            <img
-              src={imageUrl}
-              alt="Companion portrait"
-              className="companion-image"
-              width={640}
-              height={800}
-              loading="lazy"
-            />
-          ) : (
-            <div className="companion-placeholder">Base image not generated yet.</div>
-          )}
+          <div ref={companionFrameRef} className="companion-frame">
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt="Companion portrait"
+                className="companion-image"
+                width={640}
+                height={800}
+                loading="lazy"
+              />
+            ) : (
+              <div className="companion-placeholder">Base image not generated yet.</div>
+            )}
+          </div>
           <p className="state-caption">
             Companion state reacts to reply emotion and moderation fallback.
           </p>
         </aside>
 
         {tab === 'chat' ? (
-          <section
-            id="chat-panel"
-            aria-labelledby="chat-tab"
-            ref={chatPanelRef}
-            className="panel chat-panel"
-          >
+          <section id="chat-panel" aria-labelledby="chat-tab" className="panel chat-panel">
             <h2 className="panel-title">Chat Console</h2>
-            <div className="messages" aria-label="Conversation history">
+            <div ref={messagesContainerRef} className="messages" aria-label="Conversation history">
               {messages.map((message, index) => (
                 <article key={`${message.role}-${index}`} className={`message ${message.role}`}>
                   <p className="message-author">{message.role === 'assistant' ? 'Assistant' : 'You'}</p>
@@ -452,17 +456,6 @@ function App() {
                 onChange={(event) => void uploadBaseImage(event.target.files?.[0] ?? null)}
               />
               <small>{settings.baseImagePath || 'No base image configured.'}</small>
-            </label>
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                name="nsfwEnabled"
-                checked={settings.nsfwEnabled}
-                onChange={(event) =>
-                  setSettings((prev) => ({ ...prev, nsfwEnabled: event.target.checked }))
-                }
-              />
-              NSFW Enabled
             </label>
             <label className="checkbox">
               <input

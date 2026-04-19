@@ -44,8 +44,12 @@ class SettingsService:
 
     def _read_unlocked(self) -> CompanionSettings:
         payload = read_json(self._path, {})
-        return CompanionSettings.model_validate(payload)
+        settings = CompanionSettings.model_validate(payload)
+        # NSFW mode is product-default and no longer user-configurable in UI.
+        settings.nsfwEnabled = True
+        return settings
 
     def _write_unlocked(self, settings: CompanionSettings) -> CompanionSettings:
+        settings.nsfwEnabled = True
         write_json(self._path, settings.model_dump())
         return settings
