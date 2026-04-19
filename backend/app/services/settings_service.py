@@ -17,22 +17,21 @@ class SettingsService:
 
     async def get(self) -> CompanionSettings:
         async with self._lock:
-            payload = read_json(self._path, {})
-            return CompanionSettings.model_validate(payload)
+            return self._read_unlocked()
 
     async def update(self, new_settings: CompanionSettings) -> CompanionSettings:
         async with self._lock:
-            write_json(self._path, new_settings.model_dump())
-            return new_settings
+            return self._write_unlocked(new_settings)
 
     async def save_base_image(self, filename: str, data: bytes) -> CompanionSettings:
         safe_name = Path(filename or "base-image.png").name
         suffix = Path(safe_name).suffix or ".png"
         target = self._config.upload_dir / f"base-image{suffix}"
-        target.write_bytes(data)
-        current = await self.get()
-        current.baseImagePath = str(target)
-        return await self.update(current)
+        async with self._lock:
+            target.write_bytes(data)
+            current = self._read_unlocked()
+            current.baseImagePath = str(target)
+            return self._write_unlocked(current)
 
     def _ensure_default(self) -> None:
         if self._path.exists():
@@ -43,3 +42,10 @@ class SettingsService:
         )
         write_json(self._path, defaults.model_dump())
 
+    def _read_unlocked(self) -> CompanionSettings:
+        payload = read_json(self._path, {})
+        return CompanionSettings.model_validate(payload)
+
+    def _write_unlocked(self, settings: CompanionSettings) -> CompanionSettings:
+        write_json(self._path, settings.model_dump())
+        return settings

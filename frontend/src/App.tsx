@@ -88,6 +88,25 @@ function resolveAssetPath(url: string | null | undefined): string {
   return `${API_BASE}${url}`
 }
 
+function resolveBaseImagePreview(path: string | null | undefined): string {
+  if (!path) return ''
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('/static/')) {
+    return resolveAssetPath(path)
+  }
+
+  const normalized = path.replace(/\\/g, '/')
+  const uploadsIndex = normalized.lastIndexOf('/uploads/')
+  if (uploadsIndex >= 0) {
+    const relativeUploadsPath = normalized.slice(uploadsIndex)
+    return resolveAssetPath(`/static${relativeUploadsPath}`)
+  }
+
+  const parts = normalized.split('/')
+  const fileName = parts[parts.length - 1]
+  if (!fileName) return ''
+  return resolveAssetPath(`/static/uploads/${encodeURIComponent(fileName)}`)
+}
+
 function App() {
   const [tab, setTab] = useState<'chat' | 'settings'>('chat')
   const [messages, setMessages] = useState<Message[]>([
@@ -121,6 +140,7 @@ function App() {
   async function loadSettings(): Promise<void> {
     const current = await api<CompanionSettings>('/api/settings/companion')
     setSettings(current)
+    setImageUrl(resolveBaseImagePreview(current.baseImagePath))
   }
 
   async function loadMemory(query = ''): Promise<void> {
@@ -202,6 +222,7 @@ function App() {
       body: formData,
     })
     setSettings(updated)
+    setImageUrl(resolveBaseImagePreview(updated.baseImagePath))
     setToast('Base image uploaded.')
   }
 

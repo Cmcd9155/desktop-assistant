@@ -181,3 +181,27 @@ def test_settings_base_image_path_used_in_next_prompt(tmp_path) -> None:
         client.post("/api/chat/turn", json={"message": "hello"})
         time.sleep(0.1)
         assert captured["base"] == str(base_image)
+
+
+@pytest.mark.integration
+def test_upload_base_image_persists_and_is_served(tmp_path) -> None:
+    app = create_app(_config(tmp_path))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/settings/companion/base-image",
+            files={"file": ("portrait.png", b"pngbytes", "image/png")},
+        )
+        assert response.status_code == 200
+
+        uploaded_path = Path(response.json()["baseImagePath"])
+        assert uploaded_path.exists()
+        assert uploaded_path.name == "base-image.png"
+
+        saved = client.get("/api/settings/companion")
+        assert saved.status_code == 200
+        assert saved.json()["baseImagePath"] == str(uploaded_path)
+
+        static_image = client.get("/static/uploads/base-image.png")
+        assert static_image.status_code == 200
+        assert static_image.content == b"pngbytes"
