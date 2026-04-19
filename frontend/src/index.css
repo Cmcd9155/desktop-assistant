@@ -1,0 +1,36 @@
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+:root {
+  --bg: #f4efe5;
+  --bg-accent: #fff7e5;
+  --surface: rgba(255, 255, 255, 0.72);
+  --panel: rgba(250, 245, 236, 0.9);
+  --line: #d7c8ae;
+  --ink: #23323c;
+  --muted: #56656f;
+  --primary: #007a66;
+  --primary-strong: #005849;
+  --alert: #bc4b00;
+  --shadow: 0 16px 40px rgba(35, 50, 60, 0.12);
+  --heading: 'Bricolage Grotesque', 'Segoe UI', sans-serif;
+  --body: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font-family: var(--body);
+  background:
+    radial-gradient(circle at 20% 15%, rgba(0, 122, 102, 0.18), transparent 45%),
+    radial-gradient(circle at 85% 10%, rgba(188, 75, 0, 0.14), transparent 38%),
+    linear-gradient(180deg, var(--bg-accent), var(--bg));
+}
+
+#root {
+  min-height: 100vh;
+}

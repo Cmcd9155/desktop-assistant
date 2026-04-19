@@ -1,0 +1,2 @@
+"""Desktop assistant backend package."""
+
