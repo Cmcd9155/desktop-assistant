@@ -1,3 +1,9 @@
+"""Runtime configuration for the backend application.
+
+This module centralizes every env-driven knob so the rest of the app can depend
+on a typed config object instead of scattered os.getenv calls.
+"""
+
 from __future__ import annotations
 
 import os
@@ -6,6 +12,7 @@ from pathlib import Path
 
 
 def _bool_env(name: str, default: bool) -> bool:
+    """Parse the small set of truthy string forms we support in env vars."""
     value = os.getenv(name)
     if value is None:
         return default
@@ -14,6 +21,8 @@ def _bool_env(name: str, default: bool) -> bool:
 
 @dataclass(slots=True)
 class AppConfig:
+    """Single source of truth for network, storage, model, and feature settings."""
+
     app_host: str
     app_port: int
     app_origin: str
@@ -39,6 +48,8 @@ class AppConfig:
 
     @classmethod
     def from_env(cls) -> "AppConfig":
+        """Build config once at startup so downstream services stay deterministic."""
+        # Keep app data inside the backend tree by default so local runs are self-contained.
         default_data_dir = (Path(__file__).resolve().parents[1] / "data").resolve()
         data_dir = Path(os.getenv("APP_DATA_DIR", str(default_data_dir))).resolve()
         return cls(
@@ -52,7 +63,7 @@ class AppConfig:
             xai_api_base=os.getenv("XAI_API_BASE", "https://api.x.ai/v1"),
             xai_image_model=os.getenv("XAI_IMAGE_MODEL", "grok-imagine-image"),
             xai_timeout_seconds=int(os.getenv("XAI_TIMEOUT_SECONDS", "45")),
-            openclaw_base_url=os.getenv("OPENCLAW_BASE_URL", "http://127.0.0.1:8080"),
+            openclaw_base_url=os.getenv("OPENCLAW_BASE_URL", "http://127.0.0.1:18789"),
             openclaw_session_key=os.getenv("OPENCLAW_SESSION_KEY", "desktop-assistant-mvp1"),
             openclaw_model=os.getenv("OPENCLAW_MODEL", "openclaw"),
             openclaw_auth_mode=os.getenv("OPENCLAW_AUTH_MODE", "token"),
@@ -67,5 +78,6 @@ class AppConfig:
         )
 
     def ensure_directories(self) -> None:
+        """Create every directory the app persists into before any request handlers run."""
         for directory in (self.data_dir, self.image_dir, self.upload_dir):
             directory.mkdir(parents=True, exist_ok=True)

@@ -93,7 +93,7 @@ def main() -> None:
         if isinstance(payload, dict):
             results["xai_image_error"] = payload.get("error", payload)
 
-    oc_base = os.environ.get("OPENCLAW_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
+    oc_base = os.environ.get("OPENCLAW_BASE_URL", "http://127.0.0.1:18789").rstrip("/")
     oc_session = os.environ.get("OPENCLAW_SESSION_KEY", "desktop-assistant-mvp1")
     oc_token = os.environ.get("OPENCLAW_AUTH_TOKEN", "")
     oc_headers: dict[str, str] = {}

@@ -1,3 +1,10 @@
+"""Text reply generation for the assistant persona.
+
+This service tries the configured xAI text model first and falls back to a
+local echo-style response so the UI keeps working even when credentials or
+network access are unavailable.
+"""
+
 from __future__ import annotations
 
 import json
@@ -13,11 +20,14 @@ from app.models import CompanionSettings
 
 @dataclass(slots=True)
 class ChatReply:
+    """Normalized reply object consumed by the main request handler."""
+
     reply_text: str
     image_action: str
 
 
 def _extract_output_text(payload: dict[str, Any]) -> str:
+    """Pull plain text out of the Responses-style payload shape returned by xAI/OpenAI APIs."""
     output = payload.get("output")
     if not isinstance(output, list):
         return ""
@@ -38,6 +48,7 @@ def _extract_output_text(payload: dict[str, Any]) -> str:
 
 
 def _strip_code_fence(text: str) -> str:
+    """Undo a common model failure mode where JSON is wrapped in markdown fences."""
     stripped = text.strip()
     match = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, flags=re.DOTALL)
     if match:
@@ -46,6 +57,7 @@ def _strip_code_fence(text: str) -> str:
 
 
 def _normalize_field(payload: dict[str, Any], *keys: str) -> str:
+    """Accept a few key variants so minor schema drift does not break parsing."""
     for key in keys:
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
@@ -54,6 +66,7 @@ def _normalize_field(payload: dict[str, Any], *keys: str) -> str:
 
 
 def _parse_structured_reply(raw_text: str) -> ChatReply | None:
+    """Best-effort parse of the strict JSON contract we ask the model to return."""
     text = _strip_code_fence(raw_text)
     if not text:
         return None
@@ -91,13 +104,16 @@ class PrimaryChatAgent:
         self._config = config
 
     async def reply(self, user_message: str, settings: CompanionSettings) -> ChatReply:
+        """Generate the assistant's visible reply and a paired image action hint."""
         trimmed = user_message.strip()
         if not trimmed:
             return ChatReply(reply_text="I did not get a message to respond to.", image_action="")
 
         if not self._config.xai_api_key:
+            # Missing credentials should degrade to a predictable local response, not an exception.
             return self._fallback_reply(trimmed)
 
+        # The model is asked for strict JSON so the backend can split text reply from image direction.
         system_prompt = (
             "You are a desktop companion in a back-and-forth chat.\n"
             f"Bio: {settings.bio.strip() or 'Helpful desktop companion.'}\n"
@@ -134,6 +150,7 @@ class PrimaryChatAgent:
             ) as client:
                 response = await client.post("/responses", headers=headers, json=body)
         except Exception:
+            # Network issues should look like a softer product fallback, not a hard API failure.
             return self._fallback_reply(trimmed)
 
         if response.status_code >= 400:
@@ -145,10 +162,12 @@ class PrimaryChatAgent:
             parsed = _parse_structured_reply(generated)
             if parsed:
                 return parsed
+            # If the model ignored the JSON contract, still salvage the user-visible reply text.
             return ChatReply(reply_text=generated, image_action="")
         return self._fallback_reply(trimmed)
 
     def _fallback_reply(self, user_message: str) -> ChatReply:
+        """Keep local development usable even without the remote text model."""
         return ChatReply(
             reply_text=(
                 f"I heard you: {user_message}\n"

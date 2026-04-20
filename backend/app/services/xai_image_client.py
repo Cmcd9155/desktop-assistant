@@ -1,3 +1,9 @@
+"""xAI image generation/edit client used by background image jobs.
+
+The client hides endpoint selection, aspect ratio normalization, moderation
+handling, and the local placeholder fallback used when credentials are missing.
+"""
+
 from __future__ import annotations
 
 import base64
@@ -33,6 +39,8 @@ SUPPORTED_ASPECT_RATIOS: tuple[str, ...] = (
 
 @dataclass(slots=True)
 class ImageGenerationResult:
+    """Normalized result shape so callers do not need to understand raw xAI responses."""
+
     image_bytes: bytes | None
     moderated: bool
     error_code: str | None
@@ -40,6 +48,7 @@ class ImageGenerationResult:
 
 
 def _extract_error(payload: dict[str, Any]) -> str:
+    """Pull a human-readable error string from several common API error shapes."""
     error = payload.get("error")
     if isinstance(error, dict):
         message = str(error.get("message") or error.get("type") or "").strip()
@@ -48,11 +57,13 @@ def _extract_error(payload: dict[str, Any]) -> str:
 
 
 def _is_moderation_error(message: str) -> bool:
+    """Classify known safety failures so the UI can preserve the last safe image."""
     lowered = message.lower()
     return any(token in lowered for token in ("moderation", "policy", "unsafe", "safety"))
 
 
 def _image_data_url(path: Path) -> str:
+    """Inline local reference files as data URLs because the remote API cannot read local paths."""
     mime = "image/png"
     suffix = path.suffix.lower()
     if suffix in {".jpg", ".jpeg"}:
@@ -69,6 +80,7 @@ def _to_ratio_value(ratio: str) -> float:
 
 
 def _closest_supported_aspect_ratio(width: int | None, height: int | None) -> str | None:
+    """Snap arbitrary UI dimensions to the nearest aspect ratio the model accepts."""
     if not width or not height:
         return None
     if width <= 0 or height <= 0:
@@ -82,6 +94,8 @@ def _closest_supported_aspect_ratio(width: int | None, height: int | None) -> st
 
 
 class XaiImageClient:
+    """Thin wrapper over xAI image endpoints with app-specific prompt shaping and fallbacks."""
+
     def __init__(self, config: AppConfig) -> None:
         self._config = config
 
@@ -94,7 +108,9 @@ class XaiImageClient:
         image_width: int | None = None,
         image_height: int | None = None,
     ) -> ImageGenerationResult:
+        """Run a fresh generation or anchored edit depending on whether references are available."""
         if not self._config.xai_api_key:
+            # A visible placeholder keeps the UI functional in local/dev mode without real credentials.
             return ImageGenerationResult(
                 image_bytes=base64.b64decode(PNG_1X1_BASE64),
                 moderated=False,
@@ -107,6 +123,7 @@ class XaiImageClient:
         if image_width and image_height:
             frame_hint = f"Target render frame: {image_width}x{image_height} pixels.\n"
 
+        # The prefix keeps character identity and product constraints stable turn-to-turn.
         prompt_prefix = (
             "Character template: anime desk companion, stable identity, consistent face, "
             "consistent clothing silhouette, high quality, soft lighting.\n"
@@ -118,6 +135,7 @@ class XaiImageClient:
         composed_prompt = f"{prompt_prefix}\nUser turn instruction:\n{prompt}"
 
         references = [path for path in (reference_image_paths or []) if path.exists()][:5]
+        # xAI uses different endpoints for edits vs brand-new generations.
         endpoint = "/images/edits" if references else "/images/generations"
         body: dict[str, Any] = {
             "model": self._config.xai_image_model,
@@ -126,6 +144,7 @@ class XaiImageClient:
         }
         if aspect_ratio:
             body["aspect_ratio"] = aspect_ratio
+        # The API expects `image` for one reference and `images` for multiple references.
         if endpoint == "/images/edits" and len(references) == 1:
             body["image"] = {"type": "image_url", "url": _image_data_url(references[0])}
         elif endpoint == "/images/edits" and len(references) >= 2:
@@ -164,6 +183,7 @@ class XaiImageClient:
 
             data = payload.get("data") or []
             first = data[0] if data else {}
+            # Some payloads flag moderation on the root object, others on each generated item.
             moderation_value = payload.get("respect_moderation", first.get("respect_moderation", True))
             moderated = bool(moderation_value is False)
 
@@ -177,6 +197,7 @@ class XaiImageClient:
 
             b64_json = first.get("b64_json")
             if isinstance(b64_json, str) and b64_json:
+                # Inline base64 responses are the fastest path because no second fetch is needed.
                 return ImageGenerationResult(
                     image_bytes=base64.b64decode(b64_json),
                     moderated=False,
@@ -186,6 +207,7 @@ class XaiImageClient:
 
             url = first.get("url")
             if isinstance(url, str) and url:
+                # Fall back to downloading the image when the API returns a hosted URL instead.
                 image_resp = await client.get(url)
                 if image_resp.status_code == 200 and image_resp.content:
                     return ImageGenerationResult(

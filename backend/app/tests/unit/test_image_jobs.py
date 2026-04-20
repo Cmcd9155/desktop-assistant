@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from app.config import AppConfig
 from app.models import ImageJobStatus
 from app.services.image_jobs import ImageJobService
-from app.services.xai_image_client import ImageGenerationResult
+from app.services.xai_image_client import ImageGenerationResult, PNG_1X1_BASE64
 
 
 class FakeXaiClient:
@@ -132,3 +133,46 @@ async def test_image_job_reference_chain_dedupes_identical_paths(tmp_path) -> No
     refs = fake.calls[0]["reference_image_paths"]
     assert isinstance(refs, list)
     assert refs == [same]
+
+
+@pytest.mark.asyncio
+async def test_image_job_skips_placeholder_previous_reference(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg.ensure_directories()
+    previous = cfg.image_dir / "previous.png"
+    previous.write_bytes(base64.b64decode(PNG_1X1_BASE64))
+    base = cfg.upload_dir / "base.png"
+    base.write_bytes(b"base")
+    runtime_path = cfg.data_dir / "runtime_state.json"
+    runtime_path.write_text(json.dumps({"lastValidImagePath": str(previous)}), encoding="utf-8")
+
+    fake = FakeXaiClient(ImageGenerationResult(image_bytes=b"pngbytes", moderated=False, error_code=None))
+    service = ImageJobService(cfg, fake)
+    await service.enqueue(turn_id="turn-1", prompt="hello", base_image_path=base, nsfw_enabled=True)
+    await asyncio.sleep(0.05)
+
+    refs = fake.calls[0]["reference_image_paths"]
+    assert isinstance(refs, list)
+    assert refs == [base]
+
+
+@pytest.mark.asyncio
+async def test_image_job_does_not_promote_placeholder_output_to_runtime(tmp_path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg.ensure_directories()
+    service = ImageJobService(
+        cfg,
+        FakeXaiClient(
+            ImageGenerationResult(
+                image_bytes=base64.b64decode(PNG_1X1_BASE64),
+                moderated=False,
+                error_code="xai_api_key_missing",
+            )
+        ),
+    )
+
+    await service.enqueue(turn_id="turn-1", prompt="hello", base_image_path=None, nsfw_enabled=True)
+    await asyncio.sleep(0.05)
+
+    runtime_path = cfg.data_dir / "runtime_state.json"
+    assert not runtime_path.exists()

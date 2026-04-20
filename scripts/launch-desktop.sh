@@ -17,7 +17,15 @@ done
 
 is_port_open() {
   local port="$1"
-  timeout 1 bash -c "echo > /dev/tcp/127.0.0.1/${port}" >/dev/null 2>&1
+  nc -z 127.0.0.1 "$port" >/dev/null 2>&1
+}
+
+spawn_detached() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid -f "$@" < /dev/null
+    return 0
+  fi
+  nohup "$@" < /dev/null >/dev/null 2>&1 &
 }
 
 is_backend_running() {
@@ -95,9 +103,7 @@ start_backend_if_needed() {
   fi
   echo "Backend: starting..."
   load_backend_env
-  setsid -f "$ROOT_DIR/backend/.venv/bin/python" -m uvicorn app.main:app \
-    --host 127.0.0.1 --port 8787 --app-dir "$ROOT_DIR/backend" \
-    >"$BACKEND_LOG" 2>&1 < /dev/null
+  spawn_detached bash -lc "\"$ROOT_DIR/backend/.venv/bin/python\" -m uvicorn app.main:app --host 127.0.0.1 --port 8787 --app-dir \"$ROOT_DIR/backend\" >\"$BACKEND_LOG\" 2>&1"
   if wait_for_check is_backend_running 80 0.25; then
     echo "Backend: started"
   else
@@ -112,8 +118,7 @@ start_frontend_if_needed() {
     return 0
   fi
   echo "Frontend: starting..."
-  setsid -f bash -lc "cd '$ROOT_DIR/frontend' && npm run dev -- --host 127.0.0.1 --port 5173" \
-    >"$FRONTEND_LOG" 2>&1 < /dev/null
+  spawn_detached bash -lc "cd '$ROOT_DIR/frontend' && npm run dev -- --host 127.0.0.1 --port 5173 >'$FRONTEND_LOG' 2>&1"
   if wait_for_check is_frontend_running 80 0.25; then
     echo "Frontend: started"
   else

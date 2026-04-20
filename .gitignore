@@ -8,6 +8,8 @@ backend/data/
 frontend/node_modules/
 frontend/dist/
 
+.playwright-mcp/
+
 config/secrets/*.env
 config/secrets/*.key
 config/secrets/*.pem

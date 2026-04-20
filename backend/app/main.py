@@ -1,3 +1,11 @@
+"""FastAPI application wiring for the desktop assistant backend.
+
+The route handlers in this module stay intentionally thin. Their job is to
+coordinate settings, chat, image generation, memory, and OpenClaw services into
+one request/response flow rather than embedding business logic directly in the
+HTTP layer.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +47,7 @@ def _build_image_prompt(
     image_action: str,
     emotion: CompanionState,
 ) -> str:
+    """Compose the visual instruction passed to the image service for each turn."""
     return (
         "Keep the same character identity across turns and references.\n"
         f"Companion expression target: {emotion.value}\n"
@@ -49,6 +58,7 @@ def _build_image_prompt(
 
 
 def _fallback_image_action(user_text: str, emotion: CompanionState) -> str:
+    """Generate a minimal visual directive when the text model does not provide one."""
     condensed = " ".join(user_text.strip().split())
     if not condensed:
         condensed = "the current request"
@@ -56,9 +66,11 @@ def _fallback_image_action(user_text: str, emotion: CompanionState) -> str:
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
+    """Build the full application graph once so handlers can share long-lived services."""
     cfg = config or AppConfig.from_env()
     cfg.ensure_directories()
 
+    # These services each own one concern; the API layer stitches them together per request.
     settings_service = SettingsService(cfg)
     memory_service = MemoryService(cfg)
     chat_agent = PrimaryChatAgent(cfg)
@@ -69,6 +81,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         async def inactivity_loop() -> None:
+            # Reuse the OpenClaw poll cadence as a lightweight heartbeat for memory flushing.
             while not app.state.shutting_down:
                 settings = await settings_service.get()
                 await memory_service.maybe_flush_for_inactivity(memory_enabled=settings.memoryEnabled)
@@ -86,6 +99,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                     await task
             settings = await settings_service.get()
             if settings.memoryEnabled:
+                # Persist a last summary during clean shutdown so turns are not silently lost.
                 await memory_service.flush(trigger="shutdown", force=True)
 
     app = FastAPI(title="Desktop Assistant MVP1", lifespan=lifespan)
@@ -96,9 +110,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Static mounts let the frontend display generated portraits and uploaded anchors directly.
     app.mount("/static/images", StaticFiles(directory=str(cfg.image_dir)), name="images")
     app.mount("/static/uploads", StaticFiles(directory=str(cfg.upload_dir)), name="uploads")
 
+    # Storing service instances on app.state keeps route handlers small and test-friendly.
     app.state.config = cfg
     app.state.settings_service = settings_service
     app.state.memory_service = memory_service
@@ -114,17 +130,20 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/api/chat/turn", response_model=ChatTurnResponse)
     async def chat_turn(payload: ChatTurnRequest) -> ChatTurnResponse:
+        """Run the primary chat loop: text reply, image job, optional OpenClaw, memory record."""
         settings = await settings_service.get()
         await memory_service.maybe_flush_for_inactivity(memory_enabled=settings.memoryEnabled)
 
         chat_result = await chat_agent.reply(payload.message, settings)
         reply = chat_result.reply_text
         emotion = map_emotion(reply)
+        # The image model needs a concrete action sentence even if the text model omitted one.
         image_action = chat_result.image_action.strip() or _fallback_image_action(payload.message, emotion)
         warnings: list[str] = []
 
         base_image_path = Path(settings.baseImagePath) if settings.baseImagePath else None
         if not (base_image_path and base_image_path.exists()):
+            # Missing anchors should degrade gracefully instead of breaking the whole turn.
             warnings.append("Base image is missing; generating without anchor.")
             base_image_path = None
 
@@ -135,6 +154,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         )
 
         turn_id = str(uuid4())
+        # Image generation can outlive the request, so it is queued and polled separately.
         image_job_id = await image_service.enqueue(
             turn_id=turn_id,
             prompt=prompt,
@@ -146,11 +166,13 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
         openclaw_request_id = None
         if payload.includeOpenClaw:
+            # OpenClaw is optional sidecar behavior; the main reply should still succeed without it.
             oc = await openclaw_service.send(payload.message)
             openclaw_request_id = oc.requestId
             if not oc.accepted:
                 warnings.append("OpenClaw send was not accepted.")
 
+        # Record the turn after generating the local reply so memory reflects what the user saw.
         await memory_service.record_turn(
             turn_id=turn_id,
             user_text=payload.message,
@@ -179,6 +201,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         existing = await settings_service.get()
         toggling_off = existing.memoryEnabled and not settings.memoryEnabled
         if toggling_off:
+            # Flush before disabling so pending conversational state is not discarded.
             await memory_service.flush(trigger="toggle_off", force=True)
         return await settings_service.update(settings)
 
@@ -187,6 +210,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         data = await file.read()
         if not data:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        # The service handles filename sanitization and settings persistence in one place.
         return await settings_service.save_base_image(file.filename or "base-image.png", data)
 
     @app.get("/api/memory", response_model=MemoryQueryResponse)
@@ -213,4 +237,6 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     return app
 
+
+# Importers and ASGI servers expect a module-level `app` object.
 app = create_app()

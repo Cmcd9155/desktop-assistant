@@ -1,3 +1,10 @@
+"""Asynchronous bridge to a local OpenClaw gateway.
+
+The main chat experience should not block on the OpenClaw sidecar. This service
+therefore accepts requests quickly, dispatches them in the background, and
+stores timeline events the frontend can poll later.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,10 +20,12 @@ from app.storage import read_json, write_json
 
 
 def _now_iso() -> str:
+    """Generate the same compact UTC timestamps used elsewhere in persisted state."""
     return datetime.now(tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _extract_output_text(payload: dict[str, Any]) -> str:
+    """Flatten a Responses-style payload into plain text for the timeline UI."""
     output = payload.get("output")
     if not isinstance(output, list):
         return ""
@@ -37,6 +46,8 @@ def _extract_output_text(payload: dict[str, Any]) -> str:
 
 
 class OpenClawBridgeService:
+    """Queue, dispatch, and persist OpenClaw bridge activity."""
+
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._state_path = config.data_dir / "openclaw_state.json"
@@ -44,6 +55,7 @@ class OpenClawBridgeService:
         self._tasks: set[asyncio.Task[None]] = set()
 
     def _headers(self) -> dict[str, str]:
+        """Only attach auth headers when token mode is configured locally."""
         token = (self._config.openclaw_auth_token or "").strip()
         if self._config.openclaw_auth_mode != "token" or not token:
             return {}
@@ -53,7 +65,9 @@ class OpenClawBridgeService:
         }
 
     async def send(self, text: str) -> OpenClawSendResponse:
+        """Track a request locally and start the background dispatch task."""
         request_id = str(uuid4())
+        # Prefixing the user text lets downstream consumers correlate responses back to a turn.
         tagged = f"[oc_req:{request_id}] {text}"
 
         async with self._lock:
@@ -74,6 +88,7 @@ class OpenClawBridgeService:
         )
 
     async def _dispatch_and_capture(self, *, request_id: str, tagged_text: str) -> None:
+        """Send one request to OpenClaw and append the resulting event to the local log."""
         body = {
             "model": self._config.openclaw_model,
             "input": tagged_text,
@@ -94,6 +109,7 @@ class OpenClawBridgeService:
                     if output_text:
                         event_text = output_text
                 else:
+                    # Surface remote failures as timeline events so the user can see what happened.
                     event_role = "system"
                     event_text = f"OpenClaw request failed with status {response.status_code}."
         except Exception as exc:  # pragma: no cover - network variability
@@ -113,11 +129,13 @@ class OpenClawBridgeService:
             next_cursor = int(state.get("nextCursor", 0)) + 1
             event_log = list(state.get("eventLog", []))
             event_log.append({"cursor": next_cursor, "event": event.model_dump()})
+            # Keep a bounded local log so long-running sessions do not grow without limit.
             state["eventLog"] = event_log[-2000:]
             state["nextCursor"] = next_cursor
             self._save_state(state)
 
     async def poll(self, cursor: str | None = None) -> OpenClawPollResponse:
+        """Return events newer than the caller's cursor and advance the stored cursor."""
         async with self._lock:
             state = self._load_state()
             requested_cursor = cursor or str(state.get("cursor", "0"))
@@ -145,6 +163,7 @@ class OpenClawBridgeService:
             return OpenClawPollResponse(events=matched, cursor=next_cursor)
 
     def _load_state(self) -> dict[str, Any]:
+        """Initialize missing fields so polling logic can assume a stable state shape."""
         state = read_json(self._state_path, {})
         state.setdefault("cursor", "0")
         state.setdefault("trackedRequestIds", [])

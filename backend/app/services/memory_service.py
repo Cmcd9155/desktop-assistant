@@ -1,3 +1,10 @@
+"""Long-term memory extraction and transcript persistence.
+
+This service stores the full conversation transcript, periodically distills
+memory items from user turns, and exposes simple query/wipe operations for the
+settings UI.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,12 +17,15 @@ from app.storage import read_json, write_json
 
 
 def _parse_iso(ts: str) -> datetime:
+    """Accept the app's trailing-Z timestamps and normalize them to UTC datetimes."""
     if ts.endswith("Z"):
         ts = ts[:-1] + "+00:00"
     return datetime.fromisoformat(ts).astimezone(timezone.utc)
 
 
 class MemoryService:
+    """Own transcript writes, inactivity-based flushing, and memory item CRUD."""
+
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._transcript_path = config.data_dir / "transcript.json"
@@ -25,6 +35,7 @@ class MemoryService:
         self._lock = asyncio.Lock()
 
     async def record_turn(self, *, turn_id: str, user_text: str, assistant_text: str) -> None:
+        """Append the latest conversation turn and refresh the activity clock."""
         async with self._lock:
             turns = self._load_transcript()
             turns.append(
@@ -41,6 +52,7 @@ class MemoryService:
             write_json(self._runtime_path, runtime)
 
     async def maybe_flush_for_inactivity(self, *, memory_enabled: bool) -> MemoryFlushResponse | None:
+        """Flush only when memory is enabled and the user has been idle long enough."""
         if not memory_enabled:
             return None
         async with self._lock:
@@ -54,10 +66,12 @@ class MemoryService:
             return await self._flush_locked(trigger="inactivity", force=False)
 
     async def flush(self, *, trigger: str, force: bool = False) -> MemoryFlushResponse:
+        """Force a flush regardless of inactivity heuristics."""
         async with self._lock:
             return await self._flush_locked(trigger=trigger, force=force)
 
     async def query(self, query: str) -> list[MemoryItem]:
+        """Return all memory items or a simple case-insensitive substring match."""
         async with self._lock:
             items = [MemoryItem.model_validate(x) for x in read_json(self._memory_path, [])]
             if not query:
@@ -66,6 +80,7 @@ class MemoryService:
             return [item for item in items if needle in item.text.lower()]
 
     async def wipe(self) -> None:
+        """Remove stored memory and flush history while preserving transcript/runtime files."""
         async with self._lock:
             write_json(self._memory_path, [])
             write_json(self._events_path, [])
@@ -75,6 +90,7 @@ class MemoryService:
             write_json(self._runtime_path, runtime)
 
     async def _flush_locked(self, *, trigger: str, force: bool) -> MemoryFlushResponse:
+        """Convert unflushed transcript turns into durable memory items."""
         turns = [TurnRecord.model_validate(x) for x in self._load_transcript()]
         runtime = self._load_runtime()
         start_idx = int(runtime.get("lastFlushedTurnIndex", 0))
@@ -87,6 +103,7 @@ class MemoryService:
         summary_id = str(uuid4())
 
         if not memory_items and not force:
+            # Skip no-op flushes during normal inactivity checks to avoid noisy empty events.
             return MemoryFlushResponse(writtenCount=0, summaryId=summary_id)
 
         existing = read_json(self._memory_path, [])
@@ -114,10 +131,12 @@ class MemoryService:
         return MemoryFlushResponse(writtenCount=len(memory_items), summaryId=summary_id)
 
     def _summarize(self, turns: list[TurnRecord]) -> tuple[list[MemoryItem], str]:
+        """Extract a few useful durable facts from recent user turns with lightweight heuristics."""
         lines: list[tuple[str, str]] = []
         for turn in turns:
             candidate = turn.userText.strip()
             lowered = candidate.lower()
+            # This intentionally favors predictable local behavior over "smart" but unstable parsing.
             if any(token in lowered for token in ("goal", "want", "need to", "plan to")):
                 lines.append(("goal", candidate))
             elif any(token in lowered for token in ("decide", "decision", "we should", "let's")):
@@ -135,6 +154,7 @@ class MemoryService:
         items: list[MemoryItem] = []
         summary_parts: list[str] = []
         for category, text in terse:
+            # Compact entries keep the memory UI readable and avoid storing entire paragraphs.
             compact = " ".join(text.split())[:220]
             items.append(
                 MemoryItem(
@@ -151,10 +171,10 @@ class MemoryService:
         return read_json(self._transcript_path, [])
 
     def _load_runtime(self) -> dict:
+        """Return runtime defaults so other methods can treat missing files as initialized state."""
         runtime = read_json(self._runtime_path, {})
         runtime.setdefault("lastActivityAt", "")
         runtime.setdefault("lastFlushedTurnIndex", 0)
         runtime.setdefault("lastMemoryFlushAt", "")
         runtime.setdefault("lastValidImagePath", "")
         return runtime
-
